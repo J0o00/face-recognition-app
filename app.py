@@ -1,121 +1,100 @@
-# Streamlit-Based Smart Recognition System
+# Streamlit-Based Smart Recognition System using DeepFace
 #
 # Description:
-# This application uses the Streamlit framework to create an interactive web app
-# for face recognition. It allows a user to upload a photo and identifies any
-# known individuals in that photo.
+# This application uses the modern DeepFace library and the Streamlit framework
+# to create a reliable face recognition app.
 
-import face_recognition
-import numpy as np
-import os
-import cv2
 import streamlit as st
 from PIL import Image
+import numpy as np
+import pandas as pd
+from deepface import DeepFace
+import os
+import cv2
 
-# --- Global Variables & Setup ---
-KNOWN_FACES_FOLDER = 'known_faces'
+# --- Setup and Configuration ---
+st.set_page_config(page_title="Face Recognition", layout="wide")
+KNOWN_FACES_DIR = "known_faces"
 
-# --- 1. Core Face Recognition Functions (from our previous app) ---
+# Create the directory for known faces if it doesn't exist
+os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
 
-@st.cache_resource  # Decorator to cache the loaded faces
-def load_known_faces():
-    """Loads face encodings and names from the known_faces directory."""
-    known_face_encodings = []
-    known_face_names = []
-    
-    if not os.path.exists(KNOWN_FACES_FOLDER):
-        os.makedirs(KNOWN_FACES_FOLDER)
-    
-    print("Loading known faces...")
-    for filename in os.listdir(KNOWN_FACES_FOLDER):
-        if filename.endswith(('.jpg', '.jpeg', '.png')):
-            try:
-                name = filename.rsplit('_', 1)[0]
-                image_path = os.path.join(KNOWN_FACES_FOLDER, filename)
-                person_image = face_recognition.load_image_file(image_path)
+# --- Core Functions ---
+
+def draw_annotations(image, results_df):
+    """Draws bounding boxes and names on the image."""
+    img_array = np.array(image)
+    for index, row in results_df.iterrows():
+        # DeepFace returns face coordinates in 'source_x', 'source_y', etc.
+        x, y, w, h = row['source_x'], row['source_y'], row['source_w'], row['source_h']
+        
+        # Identity is the path to the matched image. We extract the name from it.
+        identity_path = row['identity']
+        # Extract the name from the file path (e.g., "known_faces/John_Doe.jpg" -> "John Doe")
+        name = os.path.basename(identity_path).split('.')[0].replace('_', ' ')
+
+        # Draw the bounding box
+        cv2.rectangle(img_array, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        
+        # Prepare text label
+        label = f"{name}"
+        
+        # Calculate text size to draw a background rectangle
+        (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+        cv2.rectangle(img_array, (x, y - text_height - 10), (x + text_width, y), (0, 255, 0), -1)
+        cv2.putText(img_array, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
+        
+    return Image.fromarray(img_array)
+
+# --- Streamlit App UI ---
+
+st.title("👨‍🎓 Smart Student Recognition System")
+st.write("This app uses the DeepFace library to identify students from a photo.")
+
+st.info("To add a new student, place their photo in the `known_faces` folder in the GitHub repository.")
+
+# Check if the known_faces directory is empty
+if not os.listdir(KNOWN_FACES_DIR):
+    st.warning("The 'known_faces' directory is empty. The app cannot recognize anyone until you add images to it on GitHub.")
+
+uploaded_image = st.file_uploader("Upload an image to find registered students...", type=["jpg", "png", "jpeg"])
+
+if uploaded_image is not None:
+    image = Image.open(uploaded_image)
+    # Convert image to numpy array for deepface
+    img_np = np.array(image)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.image(image, caption="Uploaded Image", use_column_width=True)
+
+    with st.spinner("Finding matches... this might take a moment."):
+        try:
+            # The core of the new library: find matching faces
+            # It searches the KNOWN_FACES_DIR for matches to faces in img_np
+            dfs = DeepFace.find(
+                img_path=img_np,
+                db_path=KNOWN_FACES_DIR,
+                enforce_detection=False, # Don't crash if a face isn't found
+                silent=True # Suppress console output
+            )
+            
+            # The result is a list of DataFrames, one for each face found in the uploaded image
+            if dfs and not dfs[0].empty:
+                result_df = dfs[0]
+                processed_image = draw_annotations(image, result_df)
                 
-                encodings = face_recognition.face_encodings(person_image)
-                if encodings:
-                    # To handle multiple faces in one image, just add them all
-                    for encoding in encodings:
-                        known_face_encodings.append(encoding)
-                        known_face_names.append(name)
-                else:
-                    print(f"Warning: No face found in {filename}. Skipping.")
-            except Exception as e:
-                print(f"Error loading {filename}: {e}")
+                with col2:
+                    st.image(processed_image, caption="Recognition Results", use_column_width=True)
                 
-    print(f"Loaded {len(known_face_names)} known face encodings.")
-    return known_face_encodings, known_face_names
+                # Extract and display names of recognized individuals
+                identities = result_df['identity'].apply(lambda x: os.path.basename(x).split('.')[0].replace('_', ' '))
+                st.success(f"**Recognized:** {', '.join(identities.unique())}")
+            else:
+                with col2:
+                    st.image(image, caption="No matches found.", use_column_width=True)
+                st.warning("Could not find any known students in the uploaded image.")
 
-def find_person_in_image(uploaded_image, known_face_encodings, known_face_names):
-    """Detects and recognizes faces in an uploaded image and draws boxes."""
-    # Convert the PIL image to an OpenCV image (NumPy array)
-    frame = np.array(uploaded_image)
-    # Convert RGB (from PIL) to BGR (for OpenCV)
-    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        except Exception as e:
+            st.error(f"An error occurred during face recognition: {e}")
 
-    # Find faces
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    face_locations = face_recognition.face_locations(rgb_frame)
-    face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-
-    recognized_names = set()
-    for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-        matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
-        name = "Unknown"
-        
-        face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-        if len(face_distances) > 0:
-            best_match_index = np.argmin(face_distances)
-            if matches[best_match_index]:
-                name = known_face_names[best_match_index]
-                recognized_names.add(name)
-        
-        # Draw a box around the face
-        color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
-        cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
-        
-        # Draw a label with a name below the face
-        cv2.rectangle(frame, (left, bottom - 35), (right, bottom), color, cv2.FILLED)
-        font = cv2.FONT_HERSHEY_DUPLEX
-        cv2.putText(frame, name, (left + 6, bottom - 6), font, 1.0, (255, 255, 255), 1)
-        
-    # Convert BGR (from OpenCV) back to RGB (for display)
-    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), list(recognized_names)
-
-# --- 2. Streamlit Web App Interface ---
-
-# Load known faces once
-known_encodings, known_names = load_known_faces()
-
-st.set_page_config(page_title="Face Recognition App", layout="wide")
-st.title("Smart Student Recognition System 👨‍🎓")
-st.write("Upload a photo to identify registered students.")
-
-# Note about the temporary file system
-st.warning("ℹ️ **Note:** This is a demo app. The database of known faces is not persistent and will be reset if the app restarts.")
-
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-
-if uploaded_file is not None:
-    # Open the uploaded image
-    image = Image.open(uploaded_file)
-    
-    st.image(image, caption='Uploaded Image.', use_column_width=True)
-    st.write("")
-    st.write("Recognizing...")
-    
-    # Perform recognition
-    result_image, recognized_names = find_person_in_image(image, known_encodings, known_names)
-    
-    # Display the result
-    st.image(result_image, caption='Processed Image.', use_column_width=True)
-    
-    if recognized_names:
-        st.success(f"**Found known student(s):** {', '.join(recognized_names)}")
-    else:
-        st.info("No known students were found in the image.")
-
-st.sidebar.header("About")
-st.sidebar.info("This app uses facial recognition to identify individuals. For this demo, there is no registration page. Known faces must be added manually to the GitHub repository.")
