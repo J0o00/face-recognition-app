@@ -1,3 +1,6 @@
-ffmpeg
+build-essential
+cmake
 libsm6
 libxext6
+ffmpeg
+python3.9-distutils
