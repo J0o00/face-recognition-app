@@ -1,2 +1,5 @@
-cmake
 build-essential
+cmake
+libsm6
+libxext6
+libxrender-dev
