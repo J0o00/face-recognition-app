@@ -1,100 +1,137 @@
-# Streamlit-Based Smart Recognition System using DeepFace
-#
-# Description:
-# This application uses the modern DeepFace library and the Streamlit framework
-# to create a reliable face recognition app.
+# Smart Student Recognition System using DeepFace
+# This modern version uses the deepface library for robust, pre-trained face recognition.
+# It is designed for easy deployment on cloud platforms like Streamlit Community Cloud.
 
 import streamlit as st
 from PIL import Image
 import numpy as np
 import pandas as pd
-from deepface import DeepFace
 import os
-import cv2
+from deepface import DeepFace
 
-# --- Setup and Configuration ---
-st.set_page_config(page_title="Face Recognition", layout="wide")
-KNOWN_FACES_DIR = "known_faces"
+# --- Configuration ---
+DB_PATH = "known_faces" # Directory to store the database of known faces
+MODEL_NAME = "VGG-Face" # Model for face recognition. Others: "Facenet", "OpenFace", "DeepFace", "DeepID", "ArcFace"
+DISTANCE_METRIC = "cosine" # Metric to measure similarity. Others: "euclidean", "euclidean_l2"
 
-# Create the directory for known faces if it doesn't exist
-os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
+# --- Helper Functions ---
 
-# --- Core Functions ---
+def setup_database():
+    """Create the database directory if it doesn't exist."""
+    if not os.path.exists(DB_PATH):
+        st.info(f"Creating a directory for known faces at: {DB_PATH}")
+        os.makedirs(DB_PATH)
 
-def draw_annotations(image, results_df):
-    """Draws bounding boxes and names on the image."""
-    img_array = np.array(image)
-    for index, row in results_df.iterrows():
-        # DeepFace returns face coordinates in 'source_x', 'source_y', etc.
-        x, y, w, h = row['source_x'], row['source_y'], row['source_w'], row['source_h']
-        
-        # Identity is the path to the matched image. We extract the name from it.
-        identity_path = row['identity']
-        # Extract the name from the file path (e.g., "known_faces/John_Doe.jpg" -> "John Doe")
-        name = os.path.basename(identity_path).split('.')[0].replace('_', ' ')
-
-        # Draw the bounding box
-        cv2.rectangle(img_array, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        
-        # Prepare text label
-        label = f"{name}"
-        
-        # Calculate text size to draw a background rectangle
-        (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
-        cv2.rectangle(img_array, (x, y - text_height - 10), (x + text_width, y), (0, 255, 0), -1)
-        cv2.putText(img_array, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
-        
-    return Image.fromarray(img_array)
+@st.cache_data # Cache the database to avoid reloading on every interaction
+def get_database_contents():
+    """Lists the contents of the face database."""
+    if not os.path.exists(DB_PATH) or not os.listdir(DB_PATH):
+        return []
+    # Return a list of student names from the filenames
+    return sorted([f.split('.')[0] for f in os.listdir(DB_PATH) if f.endswith(('.jpg', '.jpeg', '.png'))])
 
 # --- Streamlit App UI ---
 
-st.title("👨‍🎓 Smart Student Recognition System")
-st.write("This app uses the DeepFace library to identify students from a photo.")
+# Set up the main page
+st.set_page_config(page_title="Student Recognition", layout="wide", initial_sidebar_state="expanded")
+st.title("🎓 Smart Student Recognition System")
+st.write("---")
 
-st.info("To add a new student, place their photo in the `known_faces` folder in the GitHub repository.")
+# Initialize the database
+setup_database()
 
-# Check if the known_faces directory is empty
-if not os.listdir(KNOWN_FACES_DIR):
-    st.warning("The 'known_faces' directory is empty. The app cannot recognize anyone until you add images to it on GitHub.")
+# --- Sidebar for Registration ---
+with st.sidebar:
+    st.header("Register New Student")
+    
+    student_name = st.text_input("Enter Student Name:", placeholder="e.g., John Doe")
+    new_photo = st.file_uploader("Upload Student Photo:", type=["jpg", "jpeg", "png"], help="Upload a clear, front-facing photo.")
+    register_button = st.button("Register Student", use_container_width=True)
 
-uploaded_image = st.file_uploader("Upload an image to find registered students...", type=["jpg", "png", "jpeg"])
-
-if uploaded_image is not None:
-    image = Image.open(uploaded_image)
-    # Convert image to numpy array for deepface
-    img_np = np.array(image)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(image, caption="Uploaded Image", use_column_width=True)
-
-    with st.spinner("Finding matches... this might take a moment."):
-        try:
-            # The core of the new library: find matching faces
-            # It searches the KNOWN_FACES_DIR for matches to faces in img_np
-            dfs = DeepFace.find(
-                img_path=img_np,
-                db_path=KNOWN_FACES_DIR,
-                enforce_detection=False, # Don't crash if a face isn't found
-                silent=True # Suppress console output
-            )
-            
-            # The result is a list of DataFrames, one for each face found in the uploaded image
-            if dfs and not dfs[0].empty:
-                result_df = dfs[0]
-                processed_image = draw_annotations(image, result_df)
+    if register_button and student_name and new_photo:
+        with st.spinner("Processing registration..."):
+            try:
+                # Construct the file path
+                file_path = os.path.join(DB_PATH, f"{student_name}.jpg")
                 
-                with col2:
-                    st.image(processed_image, caption="Recognition Results", use_column_width=True)
-                
-                # Extract and display names of recognized individuals
-                identities = result_df['identity'].apply(lambda x: os.path.basename(x).split('.')[0].replace('_', ' '))
-                st.success(f"**Recognized:** {', '.join(identities.unique())}")
-            else:
-                with col2:
-                    st.image(image, caption="No matches found.", use_column_width=True)
-                st.warning("Could not find any known students in the uploaded image.")
+                # Check if student already exists
+                if os.path.exists(file_path):
+                    st.warning(f"A student with the name '{student_name}' is already registered.")
+                else:
+                    # Save the uploaded photo
+                    with open(file_path, "wb") as f:
+                        f.write(new_photo.getbuffer())
+                    
+                    # Verify if a face can be detected in the new photo
+                    try:
+                        # The find function will raise an exception if no face is detected
+                        DeepFace.find(img_path=file_path, db_path=DB_PATH, model_name=MODEL_NAME, distance_metric=DISTANCE_METRIC, enforce_detection=True)
+                        st.success(f"✅ Successfully registered {student_name}!")
+                        st.balloons()
+                        # Clear cache to update the student list
+                        st.cache_data.clear()
+                    except ValueError as e:
+                        # If DeepFace can't find a face, delete the file and inform the user
+                        os.remove(file_path)
+                        st.error("Registration failed. No face could be detected in the uploaded photo. Please use a clearer picture.")
+            except Exception as e:
+                st.error(f"An error occurred during registration: {e}")
 
-        except Exception as e:
-            st.error(f"An error occurred during face recognition: {e}")
+    # Display the list of registered students
+    st.write("---")
+    st.header("Registered Students")
+    registered_students = get_database_contents()
+    if registered_students:
+        st.dataframe(pd.DataFrame(registered_students, columns=["Name"]), use_container_width=True)
+    else:
+        st.info("No students registered yet. Use the form above to add one.")
+
+# --- Main Area for Recognition ---
+st.header("🔍 Recognize a Student")
+recognition_photo = st.file_uploader("Upload a photo for recognition:", type=["jpg", "jpeg", "png"], key="recognition")
+
+if recognition_photo is not None:
+    # Check if there are any registered students
+    if not get_database_contents():
+        st.warning("Please register at least one student in the sidebar before attempting recognition.")
+    else:
+        with st.spinner("Finding matches..."):
+            try:
+                # Convert uploaded file to a format DeepFace can use
+                image = Image.open(recognition_photo)
+                img_array = np.array(image)
+
+                # Use DeepFace to find the best match in the database
+                # This function returns a list of pandas DataFrames. If empty, no match was found.
+                dfs = DeepFace.find(
+                    img_path=img_array,
+                    db_path=DB_PATH,
+                    model_name=MODEL_NAME,
+                    distance_metric=DISTANCE_METRIC,
+                    enforce_detection=False # Allow processing even if the main face is hard to detect
+                )
+
+                if dfs and not dfs[0].empty:
+                    # Get the top match
+                    best_match = dfs[0].iloc[0]
+                    identity = best_match['identity']
+                    
+                    # Extract the name from the file path
+                    recognized_name = os.path.basename(identity).split('.')[0]
+                    
+                    st.success(f"**Match Found!** This looks like **{recognized_name}**.")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.image(image, caption="Uploaded Image", use_column_width=True)
+                    with col2:
+                        st.image(identity, caption=f"Matched Image of {recognized_name}", use_column_width=True)
+                else:
+                    st.error("No match found in the database.")
+                    st.image(image, caption="Uploaded Image", use_column_width=True)
+
+            except ValueError as e:
+                 st.error("Recognition failed. No face could be detected in the uploaded photo.")
+            except Exception as e:
+                st.error(f"An error occurred during recognition: {e}")
 
