@@ -3,4 +3,4 @@ cmake
 libsm6
 libxext6
 ffmpeg
-python3.9-distutils
+python3.9-dev
